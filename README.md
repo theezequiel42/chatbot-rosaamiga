@@ -67,7 +67,7 @@ A Rosa Amiga utiliza um sistema RAG avançado que roda inteiramente no navegador
 3. **Configure as variáveis de ambiente**
    Crie um arquivo `.env` na raiz do projeto e adicione sua chave da API do Google Gemini:
    ```
-   API_KEY=sua_chave_aqui
+   GEMINI_API_KEY=sua_chave_aqui
    ```
 
 4. **Execute o projeto**
@@ -87,6 +87,8 @@ A Rosa Amiga utiliza um sistema RAG avançado que roda inteiramente no navegador
 ## 📁 Estrutura do Projeto
 
 ```
+├── api/
+│   └── chat.ts              # Função Serverless (Edge) para proxy da API do Gemini
 ├── components/
 │   ├── ChatInterface.tsx    # Interface principal do chat
 │   ├── MessageBubble.tsx    # Componente de mensagens
@@ -105,6 +107,13 @@ A Rosa Amiga utiliza um sistema RAG avançado que roda inteiramente no navegador
 ├── types.ts                 # Definições de tipos TypeScript
 └── index.tsx                # Ponto de entrada da aplicação
 ```
+
+## 🔒 Segurança e Arquitetura Serverless
+
+A fim de proteger a chave de acesso da API do Gemini em ambiente de produção, este projeto utiliza uma arquitetura baseada em **Funções Serverless (Vercel Edge Functions)**:
+1. **Desenvolvimento Local**: O servidor do Vite possui um middleware (`vite.config.ts`) que emula localmente a rota `/api/chat` usando a variável `GEMINI_API_KEY` do arquivo `.env`.
+2. **Produção**: O código no navegador faz requisições POST para a rota `/api/chat`. Essa requisição é tratada no lado do servidor pela função em `api/chat.ts`, mantendo a chave de API oculta e protegida de engenharia reversa no cliente.
+3. **Privacidade**: Todo o processamento pesado do RAG (busca semântica por vetores e algoritmo RRF) permanece sendo executado 100% no cliente via TensorFlow.js, unindo a segurança das chaves com o respeito à privacidade dos dados de quem interage com o chat.
 
 ## 🚨 Informações Importantes
 
