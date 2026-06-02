@@ -51,8 +51,8 @@ A Rosa Amiga utiliza um sistema RAG avançado que roda inteiramente no navegador
 
 1. **Clone o repositório**
    ```bash
-   git clone <https://github.com/theezequiel42/chatbot-rag-next.js>
-   cd chatbot-rag-next.js
+   git clone <https://github.com/theezequiel42/chatbot-rosaamiga>
+   cd chatbot-rosaamiga
    ```
 
 2. **Instale as dependências**
