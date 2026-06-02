@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import type { Chat } from '@google/genai';
 import { useVoiceProcessor } from '../hooks/useVoiceProcessor';
 import AudioVisualizer from './AudioVisualizer';
-import { streamMessageToBot } from '../services/geminiService';
+import { convertToGeminiHistory, streamMessageToBot } from '../services/geminiService';
+import { ChatMessage, Sender } from '../types';
 
 interface VoiceInterfaceProps {
   onExit: () => void;
-  chat: Chat | null;
+  messages: ChatMessage[];
+  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
 }
 
 export type VoiceState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'error';
 
-const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onExit, chat }) => {
+const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onExit, messages, setMessages }) => {
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
   const { isListening, transcript, frequencyData, startListening, stopListening, speak, setTranscript } = useVoiceProcessor();
 
@@ -29,13 +30,16 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onExit, chat }) => {
   }, [isListening, voiceState, transcript]);
   
   const handleSendMessage = async (messageText: string) => {
-    if (!chat) {
-        setVoiceState('error');
-        return;
+    const userMessage: ChatMessage = {
+      id: `user-${Date.now()}`,
+      text: messageText,
+      sender: Sender.User,
     };
+    setMessages((prev) => [...prev, userMessage]);
 
     try {
-      const stream = await streamMessageToBot(chat, messageText);
+      const history = convertToGeminiHistory([...messages, userMessage]);
+      const stream = await streamMessageToBot(history, messageText);
       let responseBuffer = '';
       
       for await (const chunk of stream) {
@@ -45,23 +49,47 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onExit, chat }) => {
       const fullResponse = responseBuffer.replace(/\|\|\|/g, ' ').replace(/\*\*/g, '').trim();
 
       if (fullResponse) {
+        const botMessage: ChatMessage = {
+          id: `bot-${Date.now()}`,
+          text: responseBuffer,
+          sender: Sender.Bot,
+        };
+        setMessages((prev) => [...prev, botMessage]);
+
         setVoiceState('speaking');
         speak(fullResponse, () => {
           setVoiceState('idle');
           setTranscript('');
         });
       } else {
-        // Handle cases where the bot returns an empty response
+        const fallbackText = "Não consegui encontrar uma resposta para isso. Você pode tentar perguntar de outra forma?";
+        const botMessage: ChatMessage = {
+          id: `bot-${Date.now()}`,
+          text: fallbackText,
+          sender: Sender.Bot,
+        };
+        setMessages((prev) => [...prev, botMessage]);
+
         setVoiceState('speaking');
-        speak("Não consegui encontrar uma resposta para isso. Você pode tentar perguntar de outra forma?", () => {
-            setVoiceState('idle');
+        speak(fallbackText, () => {
+          setVoiceState('idle');
+          setTranscript('');
         });
       }
     } catch (error) {
       console.error('Failed to get response from bot:', error);
+      const errorText = 'Desculpe, ocorreu um erro de comunicação. Por favor, tente novamente.';
+      const botMessage: ChatMessage = {
+        id: `bot-error-${Date.now()}`,
+        text: errorText,
+        sender: Sender.Bot,
+      };
+      setMessages((prev) => [...prev, botMessage]);
+
       setVoiceState('speaking');
-      speak('Desculpe, ocorreu um erro de comunicação. Por favor, tente novamente.', () => {
+      speak(errorText, () => {
         setVoiceState('idle');
+        setTranscript('');
       });
     }
   };

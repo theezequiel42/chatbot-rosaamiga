@@ -1,40 +1,25 @@
-import { GoogleGenAI, Chat } from "@google/genai";
-import { SYSTEM_INSTRUCTION } from '../constants';
+import { ChatMessage, Sender } from '../types';
 import { retrieveContext } from './ragService';
 
-if (!process.env.API_KEY) {
-  throw new Error("API_KEY environment variable not set");
-}
+export const convertToGeminiHistory = (messages: ChatMessage[]) => {
+  const history: { role: string; parts: { text: string }[] }[] = [];
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  for (const msg of messages) {
+    // Skip system/error/welcome messages in the history to focus on the active dialogue
+    if (!msg.text || msg.id.startsWith('bot-error') || msg.id.startsWith('bot-welcome')) {
+      continue;
+    }
 
-// Safety settings for Gemini: allow educational discussion of violence/domestic abuse
-// while keeping strict filters for self-harm, hate and harassment.
-// Notes:
-// - Use BLOCK_ONLY_HIGH for categories that otherwise block legitimate educational content.
-const SAFETY_SETTINGS = [
-  { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-  { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-  // Permit educational content about sexual/violent/dangerous topics by only blocking high severity
-  { category: 'HARM_CATEGORY_SEXUAL', threshold: 'BLOCK_ONLY_HIGH' },
-  { category: 'HARM_CATEGORY_DANGEROUS', threshold: 'BLOCK_ONLY_HIGH' },
-  { category: 'HARM_CATEGORY_VIOLENCE', threshold: 'BLOCK_ONLY_HIGH' },
-  // For self-harm/suicide, remain strict
-  { category: 'HARM_CATEGORY_SELF_HARM', threshold: 'BLOCK_LOW_AND_ABOVE' },
-];
+    history.push({
+      role: msg.sender === Sender.User ? 'user' : 'model',
+      parts: [{ text: msg.text }]
+    });
+  }
 
-export const createChatSession = (): Chat => {
-  const chat = ai.chats.create({
-    model: 'gemini-2.5-flash',
-    config: {
-      systemInstruction: SYSTEM_INSTRUCTION,
-      safetySettings: SAFETY_SETTINGS as any,
-    },
-  });
-  return chat;
+  return history;
 };
 
-export const streamMessageToBot = async (chat: Chat, message: string) => {
+export const streamMessageToBot = async (history: any[], message: string) => {
   // 1. Retrieve context using the new semantic-based RAG service
   const context = await retrieveContext(message);
 
@@ -50,20 +35,48 @@ ${context}
 
 Pergunta do Usuário: "${message}"
 `;
-  // 3. Return the stream from the chat session
+
   try {
-    return await chat.sendMessageStream({ message: augmentedMessage });
-  } catch (err) {
-    if (import.meta.env.MODE !== 'production') {
-      try {
-        console.error('Gemini stream blocked or failed. Details:', {
-          name: (err as any)?.name,
-          message: (err as any)?.message,
-          status: (err as any)?.status,
-          blockedReason: (err as any)?.blockedReason || (err as any)?.reason,
-        });
-      } catch {}
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        history,
+        message: augmentedMessage,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Erro na resposta da API: ${response.statusText}`);
     }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('ReadableStream não suportado na resposta.');
+    }
+
+    const decoder = new TextDecoder();
+
+    // Return the async-iterable matching the previous stream interface
+    return {
+      async *[Symbol.asyncIterator]() {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const text = decoder.decode(value, { stream: true });
+            yield { text };
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      },
+    } as any;
+
+  } catch (err: any) {
+    console.error('API proxy stream failed. Details:', err);
     // Fallback friendly message stream following the persona delimiter rules
     const fallback = [
       'Desculpe, tive um problema para responder agora.',
@@ -71,7 +84,6 @@ Pergunta do Usuário: "${message}"
       'Posso falar de violência doméstica de forma informativa e com orientações de segurança. O que você precisa saber?'
     ].join('|||');
 
-    // Minimal async-iterable compatible with for-await consumption in UI
     return {
       async *[Symbol.asyncIterator]() {
         yield { text: fallback } as any;

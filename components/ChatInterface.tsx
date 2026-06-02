@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import type { Chat } from '@google/genai';
 import { ChatMessage, Sender } from '../types';
-import { createChatSession, streamMessageToBot } from '../services/geminiService';
+import { convertToGeminiHistory, streamMessageToBot } from '../services/geminiService';
 import { initializeRag } from '../services/ragService';
 import MessageBubble from './MessageBubble';
 import VoiceInterface from './VoiceInterface';
@@ -30,7 +29,7 @@ const ChatInterface: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
   const [initError, setInitError] = useState<string | null>(null);
-  const [chat, setChat] = useState<Chat | null>(null);
+  // Removed stateful chat object. We now send conversation history to the API proxy instead.
   const [showQuickReplies, setShowQuickReplies] = useState(false);
   const [mode, setMode] = useState<'text' | 'voice'>('text');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -45,8 +44,6 @@ const ChatInterface: React.FC = () => {
   }, [messages]);
 
   const initializeChat = useCallback(() => {
-    const newChat = createChatSession();
-    setChat(newChat);
     setMessages([]);
 
     const welcomeTexts = [
@@ -101,7 +98,7 @@ const ChatInterface: React.FC = () => {
   }, [initializeChat]);
   
   const handleSendMessage = async (messageText: string) => {
-    if (!messageText.trim() || isLoading || !chat) return;
+    if (!messageText.trim() || isLoading) return;
 
     setShowQuickReplies(false);
 
@@ -163,7 +160,8 @@ const ChatInterface: React.FC = () => {
 
 
     try {
-      const stream = await streamMessageToBot(chat, messageText);
+      const history = convertToGeminiHistory([...messages, userMessage]);
+      const stream = await streamMessageToBot(history, messageText);
       let responseBuffer = '';
       
       for await (const chunk of stream) {
@@ -204,7 +202,7 @@ const ChatInterface: React.FC = () => {
   }
   
   if (mode === 'voice') {
-    return <VoiceInterface onExit={() => setMode('text')} chat={chat} />;
+    return <VoiceInterface onExit={() => setMode('text')} messages={messages} setMessages={setMessages} />;
   }
 
   if (isInitializing || initError) {
